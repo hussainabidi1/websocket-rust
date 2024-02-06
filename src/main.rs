@@ -5,7 +5,7 @@ use futures_util::{
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::Mutex
+    sync::Mutex,
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
@@ -14,7 +14,7 @@ type SplitSocket = (
     SplitStream<WebSocketStream<TcpStream>>,
 );
 
-async fn socket_connect(
+async fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
     client_manager: Arc<Mutex<ClientManager>>,
@@ -36,14 +36,12 @@ async fn socket_connect(
                 return;
             }
 
-            let client = locked_client_manager.create_client(socket.split(), ip.clone()); // ok it died WHY I DONT SEE ERRORS
+            let client = locked_client_manager.create_client(socket.split(), ip.clone());
 
             println!("Socket {} from {} connected", client.index, ip);
 
             client.talk(&format!("Hello {}!", client.index)).await;
-            //tokio::spawn(async move {
-            //client.hear().await;
-            //});
+            client.hear().await;
         }
         Err(e) => println!("Error: {}", e),
     }
@@ -58,10 +56,7 @@ async fn main() {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
-                let client_manager_cloned = client_manager.clone();
-                tokio::spawn(async move {
-                    socket_connect(stream, addr, client_manager_cloned).await;
-                });
+                handle_connection(stream, addr, Arc::clone(&client_manager)).await;
             }
             Err(e) => println!("Error: {}", e),
         }
@@ -90,17 +85,9 @@ impl Client {
     }
 
     async fn hear(&mut self) {
-        loop {
-            if let Some(Ok(message)) = self.socket.1.next().await {
-                println!("{} from {}: {:?}", self.index, self.address, message);
-            }
+        if let Some(Ok(message)) = self.socket.1.next().await {
+            println!("{} from {}: {:?}", self.index, self.address, message);
         }
-    }
-
-    fn something(&'static mut self) {
-        tokio::spawn(async move {
-            self.hear().await;
-        });
     }
 }
 
@@ -124,8 +111,6 @@ impl ClientManager {
             .entry(index)
             .or_insert_with(|| Client::new(index, socket, address))
     }
-
-    // SHUT UP
 
     #[allow(dead_code)]
     fn destroy_client(&mut self, index: usize) {
